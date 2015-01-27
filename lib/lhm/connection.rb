@@ -38,7 +38,7 @@ module Lhm
       def update(statements)
         [statements].flatten.inject(0) do |memo, statement|
           result = @adapter.execute(tagged(statement))
-          memo  += result.affected_rows
+          memo + result.affected_rows
         end
       end
 
