@@ -20,6 +20,7 @@ module Lhm
       @start = options[:start] || select_start
       @limit = options[:limit] || select_limit
       @printer = options[:printer] || Printer::Percentage.new
+      @retries = options[:retries] || 0
     end
 
     def execute
@@ -27,7 +28,17 @@ module Lhm
       @next_to_insert = @start
       while @next_to_insert < @limit || (@next_to_insert == 1 && @start == 1)
         stride = @throttler.stride
-        affected_rows = @connection.update(copy(bottom, top(stride)))
+        retry_count = 0
+        begin
+          affected_rows = @connection.update(copy(bottom, top(stride)))
+        rescue ::ActiveRecord::TransactionIsolationConflict
+          raise if retry_count >= @retries
+          retry_count += 1
+          Lhm.logger.warn("Transaction isolation conflict detected. Retry # #{retry_count} / #{@retries}")
+          seconds = [0,1,2,4,8,16][count-1] || 32
+          sleep( seconds ) if seconds > 0
+          retry
+        end
 
         if @throttler && affected_rows > 0
           @throttler.run
@@ -102,7 +113,7 @@ module Lhm
 
     def validate
       if @start && @limit && @start > @limit
-        error('impossible chunk options (limit must be greater than start)')
+          error('impossible chunk options (limit must be greater than start)')
       end
     end
   end
