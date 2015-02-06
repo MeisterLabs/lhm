@@ -31,13 +31,18 @@ module Lhm
         retry_count = 0
         begin
           affected_rows = @connection.update(copy(bottom, top(stride)))
-        rescue ::ActiveRecord::TransactionIsolationConflict
-          raise if retry_count >= @retries
-          retry_count += 1
-          Lhm.logger.warn("Transaction isolation conflict detected. Retry # #{retry_count} / #{@retries}")
-          seconds = [0,1,2,4,8,16][count-1] || 32
-          sleep( seconds ) if seconds > 0
-          retry
+        rescue Exception => e
+          if e.message =~ /Deadlock found when trying to get lock/ ||
+             e.message =~ /Lock wait timeout exceeded/
+            raise e if retry_count >= @retries
+            retry_count += 1
+            Lhm.logger.warn("Transaction deadlock detected. Retry # #{retry_count} / #{@retries}")
+            seconds = [0,1,2,4,8,16][count-1] || 32
+            sleep( seconds ) if seconds > 0
+            retry
+          else
+            raise e
+          end
         end
 
         if @throttler && affected_rows > 0
