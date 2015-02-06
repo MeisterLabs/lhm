@@ -36,8 +36,8 @@ module Lhm
              e.message =~ /Lock wait timeout exceeded/
             raise e if retry_count >= @retries
             retry_count += 1
-            Lhm.logger.warn("Transaction deadlock detected. Retry # #{retry_count} / #{@retries}")
-            seconds = [0,1,2,4,8,16][count-1] || 32
+            Lhm.logger.warn("Transaction deadlock detected. Retry # #{retry_count} / #{@retries} #{e.message}")
+            seconds = [0,1,2,4,8,16][retry_count-1] || 32
             sleep( seconds ) if seconds > 0
             retry
           else
