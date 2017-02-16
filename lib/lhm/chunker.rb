@@ -22,30 +22,49 @@ module Lhm
       @start = options[:start] || select_start
       @limit = options[:limit] || select_limit
       @printer = options[:printer] || Printer::Percentage.new
-      @retries = options[:retries] || 0
+
+      @retry_on_deadlock = retry_on_deadlock(options.with_indifferent_access)
+      @retry_attempts = retry_attempts(options.with_indifferent_access)
+      @retry_wait_time = retry_wait_time(options.with_indifferent_access)
     end
 
     def execute
       return unless @start && @limit
       @next_to_insert = @start
+      retries = 0
+
       while @next_to_insert < @limit || (@start == @limit)
         stride = @throttler.stride
-        retry_count = 0
+
         begin
           affected_rows = @connection.update(copy(bottom, top(stride)))
-        rescue Exception => e
-          if e.message =~ /Deadlock found when trying to get lock/ ||
-             e.message =~ /Lock wait timeout exceeded/
-            raise e if retry_count >= @retries
-            retry_count += 1
-            Lhm.logger.warn("Transaction deadlock detected. Retry # #{retry_count} / #{@retries} #{e.message}")
-            seconds = [0,1,2,4,8,16][retry_count-1] || 32
-            sleep( seconds ) if seconds > 0
-            retry
+        rescue ActiveRecord::StatementInvalid => err
+          if err.message.downcase.index('deadlock').nil? ||
+              err.message.downcase.index('lock wait timeout').nil?
+            raise
+            return
+          end
+
+          unless @retry_on_deadlock
+            raise
+            return
+          end
+
+          retries = retries + 1
+          if retries == (@retry_attempts + 1)
+            puts "Crossed #{@retry_attempts} attempts. Raising exception ..."
+            raise
+            return
           else
-            raise e
+            puts "Caught exception: #{err.message}."
+            print "Attempt #{retries} of #{@retry_attempts} "
+            puts "after sleeping for #{@retry_wait_time} seconds ..."
+            sleep @retry_wait_time
+            next
           end
         end
+
+        retries = 0
 
         if @throttler && affected_rows > 0
           @throttler.run
@@ -121,8 +140,37 @@ module Lhm
 
     def validate
       if @start && @limit && @start > @limit
-          error('impossible chunk options (limit must be greater than start)')
+        error('impossible chunk options (limit must be greater than start)')
       end
+    end
+
+    def retry_on_deadlock(options)
+      if options.has_key?(:retry_on_deadlock) &&
+          ( options[:retry_on_deadlock].is_a?(TrueClass) ||
+              options[:retry_on_deadlock].is_a?(FalseClass) )
+        return options[:retry_on_deadlock]
+      end
+
+      true
+    end
+
+    def retry_attempts(options)
+      if options.has_key?(:retry_attempts) &&
+          options[:retry_attempts].is_a?(Numeric)
+        return options[:retry_attempts]
+      end
+
+      10
+    end
+
+    def retry_wait_time(options)
+      if options.has_key?(:retry_wait_time) &&
+          options[:retry_wait_time].is_a?(Numeric)
+
+        return options[:retry_wait_time]
+      end
+
+      10
     end
   end
 end
