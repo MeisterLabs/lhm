@@ -39,7 +39,7 @@ module Lhm
         begin
           affected_rows = @connection.update(copy(bottom, top(stride)))
         rescue ActiveRecord::StatementInvalid => err
-          if err.message.downcase.index('deadlock').nil? ||
+          if err.message.downcase.index('deadlock').nil? &&
               err.message.downcase.index('lock wait timeout').nil?
             raise
             return
